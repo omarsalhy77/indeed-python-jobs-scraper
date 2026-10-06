@@ -1,0 +1,77 @@
+# Install first:  pip install requests beautifulsoup4
+
+import csv
+import requests
+from bs4 import BeautifulSoup
+
+# False = download the page from Indeed with requests
+# True  = read a page you saved yourself from your browser (Ctrl+S)
+USE_SAVED_FILE = True
+SAVED_FILE = "indeed_page.html"
+
+url = "https://www.indeed.com/jobs?q=python"
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.google.com/",
+}
+
+# Words we look for to find the job type
+job_types = ["Full-time", "Part-time", "Contract", "Internship",
+             "Temporary", "Permanent", "Remote", "Hybrid"]
+
+# 1. GET THE HTML: either from Indeed or from the file you saved
+if USE_SAVED_FILE:
+    with open(SAVED_FILE, "r", encoding="utf-8") as file:
+        html = file.read()
+else:
+    response = requests.get(url, headers=headers)
+    print("Status:", response.status_code)  # 200 = success, 403 = blocked
+    if response.status_code != 200:
+        print("Indeed blocked the request. Save the page from your browser")
+        print("and set USE_SAVED_FILE = True, then run again.")
+        exit()
+    html = response.text
+
+# 2. PARSE: turn the HTML text into something we can search
+soup = BeautifulSoup(html, "html.parser")
+
+# Find every job card. If the first selector finds nothing, try the second one.
+cards = soup.select(".job_seen_beacon")
+if not cards:
+    cards = soup.select("[data-jk]")
+print("Job cards found:", len(cards))
+
+all_jobs = []
+
+# 3. EXTRACT: look for the data INSIDE each card, one card at a time,
+#    so a missing field never takes data from a different job.
+for card in cards:
+    # a comma in the selector means "try any of these"
+    title = card.select_one("a.jcs-JobTitle, [id^='jobTitle-'], h2 span[title], h2 span, a[data-jk]")
+    location = card.select_one("[data-testid='text-location'], .companyLocation")
+
+    # the small info tags on the card (like "Full-time")
+    tags_text = ""
+    for tag in card.select("[data-testid='attribute_snippet_testid'], .metadata"):
+        tags_text = tags_text + " " + tag.get_text(" ", strip=True)
+
+    found_types = []
+    for job_type in job_types:
+        if job_type.lower() in tags_text.lower():
+            found_types.append(job_type)
+
+    all_jobs.append([
+        title.get_text(strip=True) if title else "N/A",
+        location.get_text(strip=True) if location else "N/A",
+        ", ".join(found_types) if found_types else "N/A",
+    ])
+
+# 4. SAVE: write everything to a CSV file
+with open("indeed_python_jobs.csv", "w", newline="", encoding="utf-8-sig") as file:
+    writer = csv.writer(file)
+    writer.writerow(["Job Title", "Location", "Job Type"])
+    writer.writerows(all_jobs)
+
+print("Done! Saved", len(all_jobs), "jobs to indeed_python_jobs.csv")
